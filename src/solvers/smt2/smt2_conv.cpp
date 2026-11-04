@@ -5691,6 +5691,45 @@ exprt smt2_convt::prepare_for_convert_expr(const exprt &expr)
       it.mutate() = lowered;
       it.next_sibling_or_parent();
     }
+    else if(use_FPA_theory)
+    {
+      // Unions are flattened to bit-vectors, but FPA-encoded floats are not
+      // bit-vectors. Make the bit-wise conversion of float members explicit,
+      // which find_symbols then handles.
+      auto is_union = [](const typet &type)
+      { return type.id() == ID_union || type.id() == ID_union_tag; };
+      auto float_to_bv = [this](const exprt &e)
+      { return typecast_exprt{e, bv_typet{boolbv_width(e.type())}}; };
+
+      if(auto union_expr = expr_try_dynamic_cast<union_exprt>(*it))
+      {
+        if(union_expr->op().type().id() == ID_floatbv)
+          to_union_expr(it.mutate()).op() = float_to_bv(union_expr->op());
+      }
+      else if(auto with_expr = expr_try_dynamic_cast<with_exprt>(*it))
+      {
+        if(
+          is_union(with_expr->type()) &&
+          with_expr->new_value().type().id() == ID_floatbv)
+        {
+          to_with_expr(it.mutate()).new_value() =
+            float_to_bv(with_expr->new_value());
+        }
+      }
+      else if(auto member_expr = expr_try_dynamic_cast<member_exprt>(*it))
+      {
+        if(
+          is_union(member_expr->compound().type()) &&
+          member_expr->type().id() == ID_floatbv)
+        {
+          const typet float_type = member_expr->type();
+          member_exprt bits = *member_expr;
+          bits.type() = bv_typet{boolbv_width(float_type)};
+          it.mutate() = typecast_exprt{std::move(bits), float_type};
+        }
+      }
+      ++it;
+    }
     else
       ++it;
   }

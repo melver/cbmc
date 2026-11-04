@@ -1,0 +1,14 @@
+CORE no-new-smt
+main.c
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+SMT2 back-ends using the floating-point theory (--cprover-smt2, --bitwuzla,
+--cvc5) flatten unions to bit-vectors, but encode doubles as floating-point
+terms. Writing a non-constant double member used to fail an invariant in
+flatten2bv, and reading one produced an ill-sorted term.
+The new SMT back-end does not support extractbit yet.
