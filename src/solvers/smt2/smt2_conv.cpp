@@ -3139,8 +3139,13 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
       out << " (ite (and ";
 
       // some fraction bit is not zero
-      out << "(not (= ((_ extract " << (from_fraction_bits-1) << " 0) ?tcop) "
-             "(_ bv0 " << from_fraction_bits << ")))";
+      if(from_fraction_bits == 0)
+        out << "false";
+      else
+      {
+        out << "(not (= ((_ extract " << (from_fraction_bits - 1)
+            << " 0) ?tcop) (_ bv0 " << from_fraction_bits << ")))";
+      }
 
       // number negative
       out << " (= ((_ extract " << (from_width-1) << " " << (from_width-1)
@@ -3292,13 +3297,13 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     std::size_t to_fraction_bits=fixedbv_type.get_fraction_bits();
     std::size_t to_integer_bits=fixedbv_type.get_integer_bits();
 
-    if(src_type.id()==ID_unsignedbv ||
-       src_type.id()==ID_signedbv ||
-       src_type.id()==ID_c_enum)
+    if(
+      src_type.id() == ID_unsignedbv || src_type.id() == ID_signedbv ||
+      src_type.id() == ID_c_enum || src_type.id() == ID_c_bool)
     {
       // integer to fixedbv
 
-      std::size_t from_width=to_bitvector_type(src_type).get_width();
+      std::size_t from_width = boolbv_width(src_type);
       out << "(concat ";
 
       if(from_width==to_integer_bits)
@@ -3318,7 +3323,7 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
           "from_width should be smaller than to_integer_bits as other case "
           "have been handled above");
         if(
-          src_type.id() == ID_unsignedbv ||
+          src_type.id() == ID_unsignedbv || src_type.id() == ID_c_bool ||
           (src_type.id() == ID_c_enum &&
            to_c_enum_type(src_type).underlying_type().id() == ID_unsignedbv))
         {
@@ -3438,7 +3443,7 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
       }
       else // from_width>to_width
       {
-        out << "((_ extract " << to_width << " 0) ";
+        out << "((_ extract " << to_width - 1 << " 0) ";
         convert_expr(src);
         out << ")"; // extract
       }
@@ -3452,23 +3457,47 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     const auto dest_width = address_bits(dest_range_type.size());
     if(src_type.id() == ID_range)
     {
+      // Range values are stored as (value - from). A cast between range
+      // types must add (src_from - dest_from) to adjust the offset,
+      // matching the SAT backend (boolbv_typecast.cpp).
       auto &src_range_type = to_integer_range_type(src_type);
       const auto src_width = address_bits(src_range_type.size());
-      if(src_width < dest_width)
+      const mp_integer offset = src_range_type.from() - dest_range_type.from();
+
+      // First, bring the source to dest_width.
+      const bool need_extend = src_width < dest_width;
+      const bool need_extract = src_width > dest_width;
+      const bool need_offset = offset != 0;
+
+      if(need_offset)
+        out << "(bvadd ";
+
+      if(need_extend)
       {
         out << "((_ zero_extend " << dest_width - src_width << ") ";
         convert_expr(src);
         out << ')'; // zero_extend
       }
-      else if(src_width > dest_width)
+      else if(need_extract)
       {
         out << "((_ extract " << dest_width - 1 << " 0) ";
         convert_expr(src);
         out << ')'; // extract
       }
-      else // src_width == dest_width
+      else
       {
         convert_expr(src);
+      }
+
+      if(need_offset)
+      {
+        // the offset may exceed the bit width, reduce it modulo 2^dest_width
+        const mp_integer modulus = power(2, dest_width);
+        mp_integer offset_bits = offset % modulus;
+        if(offset_bits < 0)
+          offset_bits += modulus;
+        out << " (_ bv" << integer2string(offset_bits) << " " << dest_width
+            << "))"; // bvadd
       }
     }
     else
